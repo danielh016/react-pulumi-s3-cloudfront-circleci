@@ -1,17 +1,57 @@
 version: 2.1
+
 orbs:
-  node: circleci/node@1.1.6
+  aws-cli: circleci/aws-cli@0.1.20
+
 jobs:
-  build-and-test:
-    executor:
-      name: node/default
+  test-and-build:
+    docker:
+      - image: circleci/node:10.15.3
     steps:
       - checkout
-      - node/with-cache:
-          steps:
-            - run: npm install
-            - run: npm test
+      - setup_remote_docker
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+      - run:
+          name: Install dependencies
+          command: yarn install
+      - save_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+          paths:
+            - node_modules
+      - run:
+          name: Test the application
+          command: yarn test
+      - run:
+          name: Build the application
+          command: yarn build
+      - persist_to_workspace:
+          root: ./
+          paths:
+            - package.json
+            - node_modules
+            - src
+            - build
+  deploy-to-s3:
+    executor: aws-cli/default
+    steps:
+      - attach_workspace:
+          at: .
+      - aws-cli/setup
+      - run:
+          name: Upload application to S3
+          command: aws s3 sync ./build s3://$S3_BUCKET_NAME --delete
+
 workflows:
-  build-and-test:
+  version: 2
+  build-deploy:
     jobs:
-      - build-and-test
+      - test-and-build:
+          context: s3-static-website
+      - deploy-to-s3:
+          context: s3-static-website
+          requires:
+            - test-and-build
+          filters:
+            branches:
+              only: master
